@@ -1,0 +1,61 @@
+use chrono::{NaiveDateTime, Timelike};
+use reqwest::{Client};
+use serde::Deserialize;
+
+/*
+use serde::de::Error;
+fn deserialize_datetime<'de, D>(deserializer: D) -> Result<DateTime<Utc>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    let format = "%Y-%m-%d %H:%M"; // Adjust the format to match your datetime strings
+    let naive_dt = NaiveDateTime::parse_from_str(&s, format)
+        .map_err(D::Error::custom)?;
+    Ok(Utc.from_utc_datetime(&naive_dt))
+}*/
+
+#[derive(Debug, Deserialize)]
+struct HourlyResponse {
+    //#[serde(deserialize_with = "deserialize_datetime")]
+    //time: Vec<DateTime<Utc>>,
+    time: Vec<String>,
+    #[serde(alias = "temperature_2m")]
+    temperature: Vec<f64>, 
+    precipitation: Vec<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WeatherResponse {
+    // no need for the other stuff
+    hourly: HourlyResponse
+}
+
+#[tokio::main]
+async fn main() -> Result<(), reqwest::Error> {
+    // @TODO: flexible lat/lon
+    let url = "https://api.open-meteo.com/v1/forecast?latitude=42.5682&longitude=23.1795&hourly=temperature_2m,precipitation&forecast_days=16";
+    let resp: WeatherResponse = Client::new().get(url).send().await?.json().await?;
+    let hours: Vec<bool> = resp.hourly
+        .time
+        .iter()
+        .enumerate()
+        .filter_map(|(i, timestamp)| {
+            let date = NaiveDateTime::parse_from_str(&timestamp, "%Y-%m-%dT%H:%M").expect("date parsing");
+            let is_night = date.hour() < 7;
+            let temp_celsius = resp.hourly.temperature[i];
+            if is_night { return None; }
+            if resp.hourly.precipitation[i] == 0.0 {
+                Some(temp_celsius > 5.0)
+            } else if resp.hourly.precipitation[i] <= 0.5 {
+                Some(temp_celsius > 10.0)
+            } else {
+                Some(temp_celsius > 15.0)
+            }
+        })
+        .collect();
+
+    let summer_hours = hours.iter().filter(|x| **x).collect::<Vec<_>>().len();
+    dbg!(summer_hours as f64 / hours.len() as f64);
+    Ok(())
+}
