@@ -42,13 +42,13 @@ async fn main() -> Result<(), reqwest::Error> {
         .enumerate()
         .filter_map(|(i, timestamp)| {
             let date = NaiveDateTime::parse_from_str(&timestamp, "%Y-%m-%dT%H:%M").expect("date parsing");
-            let is_night = date.hour() < 7;
+            let is_night = date.hour() < 7 || date.hour() > 22;
             let temp_celsius = resp.hourly.temperature[i];
             if is_night { return None; }
             if resp.hourly.precipitation[i] == 0.0 {
                 Some(temp_celsius > 5.0)
             } else if resp.hourly.precipitation[i] <= 0.5 {
-                Some(temp_celsius > 10.0)
+                Some(temp_celsius > 8.0)
             } else {
                 Some(temp_celsius > 15.0)
             }
