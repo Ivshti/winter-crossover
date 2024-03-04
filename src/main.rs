@@ -57,6 +57,11 @@ async fn main() -> Result<(), reqwest::Error> {
         .collect();
 
     let summer_hours = hours.iter().filter(|x| **x).collect::<Vec<_>>().len();
-    dbg!(summer_hours as f64 / hours.len() as f64);
+    let ratio = summer_hours as f64 / hours.len() as f64;
+    println!(
+        "{}, ratio: {}",
+        if ratio > 0.6 { "☀️ TIME FOR SUMMER TIRES ☀️" } else { "❄️ stay on winters ❄️" },
+        ratio
+    );
     Ok(())
 }
