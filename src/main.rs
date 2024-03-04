@@ -42,16 +42,16 @@ async fn main() -> Result<(), reqwest::Error> {
         .enumerate()
         .filter_map(|(i, timestamp)| {
             let date = NaiveDateTime::parse_from_str(&timestamp, "%Y-%m-%dT%H:%M").expect("date parsing");
-            let is_night = date.hour() < 7 || date.hour() > 22;
+            let is_night = date.hour() < 8 || date.hour() > 21;
             if is_night { return None; }
             let temp_celsius = if let Some(Some(temp)) = resp.hourly.temperature.get(i) { *temp } else { return None; };
             let rain = if let Some(Some(rain)) = resp.hourly.precipitation.get(i) { *rain } else { return None; };
             if rain == 0.0 {
                 Some(temp_celsius > 5.0)
             } else if rain <= 0.5 {
-                Some(temp_celsius > 8.0)
+                Some(temp_celsius > 7.0)
             } else {
-                Some(temp_celsius > 15.0)
+                Some(temp_celsius > 13.0)
             }
         })
         .collect();
