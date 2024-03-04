@@ -44,8 +44,8 @@ async fn main() -> Result<(), reqwest::Error> {
             let date = NaiveDateTime::parse_from_str(&timestamp, "%Y-%m-%dT%H:%M").expect("date parsing");
             let is_night = date.hour() < 8 || date.hour() > 21;
             if is_night { return None; }
-            let temp_celsius = if let Some(Some(temp)) = resp.hourly.temperature.get(i) { *temp } else { return None; };
-            let rain = if let Some(Some(rain)) = resp.hourly.precipitation.get(i) { *rain } else { return None; };
+            let temp_celsius = (*resp.hourly.temperature.get(i)?)?;
+            let rain = (*resp.hourly.precipitation.get(i)?)?;
             if rain == 0.0 {
                 Some(temp_celsius > 5.0)
             } else if rain <= 0.5 {
