@@ -56,6 +56,11 @@ async fn main() -> Result<(), reqwest::Error> {
         })
         .collect();
 
+    if hours.len() < 200 {
+        eprintln!("to small of a sample: {} hours found", hours.len());
+        return Ok(());
+    }
+
     let summer_hours = hours.iter().filter(|x| **x).collect::<Vec<_>>().len();
     let ratio = summer_hours as f64 / hours.len() as f64;
     println!(
