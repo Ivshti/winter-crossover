@@ -21,8 +21,8 @@ struct HourlyResponse {
     //time: Vec<DateTime<Utc>>,
     time: Vec<String>,
     #[serde(alias = "temperature_2m")]
-    temperature: Vec<f64>, 
-    precipitation: Vec<f64>,
+    temperature: Vec<Option<f64>>, 
+    precipitation: Vec<Option<f64>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -43,11 +43,12 @@ async fn main() -> Result<(), reqwest::Error> {
         .filter_map(|(i, timestamp)| {
             let date = NaiveDateTime::parse_from_str(&timestamp, "%Y-%m-%dT%H:%M").expect("date parsing");
             let is_night = date.hour() < 7 || date.hour() > 22;
-            let temp_celsius = resp.hourly.temperature[i];
+            let temp_celsius = if let Some(Some(temp)) = resp.hourly.temperature.get(i) { *temp } else { return None; };
+            let rain = if let Some(Some(rain)) = resp.hourly.precipitation.get(i) { *rain } else { return None; };
             if is_night { return None; }
-            if resp.hourly.precipitation[i] == 0.0 {
+            if rain == 0.0 {
                 Some(temp_celsius > 5.0)
-            } else if resp.hourly.precipitation[i] <= 0.5 {
+            } else if rain <= 0.5 {
                 Some(temp_celsius > 8.0)
             } else {
                 Some(temp_celsius > 15.0)
