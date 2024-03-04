@@ -46,13 +46,13 @@ async fn main() -> Result<(), reqwest::Error> {
             if is_night { return None; }
             let temp_celsius = (*resp.hourly.temperature.get(i)?)?;
             let rain = (*resp.hourly.precipitation.get(i)?)?;
-            if rain == 0.0 {
-                Some(temp_celsius > 5.0)
+            Some(if rain == 0.0 {
+                temp_celsius > 5.0
             } else if rain <= 0.5 {
-                Some(temp_celsius > 7.0)
+                temp_celsius > 7.0
             } else {
-                Some(temp_celsius > 13.0)
-            }
+                temp_celsius > 13.0
+            })
         })
         .collect();
 
