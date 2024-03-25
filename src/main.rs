@@ -23,6 +23,7 @@ struct HourlyResponse {
     #[serde(alias = "temperature_2m")]
     temperature: Vec<Option<f64>>, 
     precipitation: Vec<Option<f64>>,
+    snowfall: Vec<Option<f64>>
 }
 
 #[derive(Debug, Deserialize)]
@@ -34,7 +35,7 @@ struct WeatherResponse {
 #[tokio::main]
 async fn main() -> Result<(), reqwest::Error> {
     // @TODO: flexible lat/lon
-    let url = "https://api.open-meteo.com/v1/forecast?latitude=42.5682&longitude=23.1795&hourly=temperature_2m,precipitation&forecast_days=16";
+    let url = "https://api.open-meteo.com/v1/forecast?latitude=42.5682&longitude=23.1795&hourly=temperature_2m,precipitation,snowfall&forecast_days=16";
     let resp: WeatherResponse = Client::new().get(url).send().await?.json().await?;
     let hours: Vec<bool> = resp.hourly
         .time
@@ -61,12 +62,14 @@ async fn main() -> Result<(), reqwest::Error> {
         return Ok(());
     }
 
+    let snowfall = resp.hourly.snowfall.iter().filter_map(|x| *x).any(|x| x > 0.0);
     let summer_hours = hours.iter().filter(|x| **x).collect::<Vec<_>>().len();
     let ratio = summer_hours as f64 / hours.len() as f64;
     println!(
-        "{}, ratio: {}",
-        if ratio > 0.6 { "☀️ TIME FOR SUMMER TIRES ☀️" } else { "❄️ stay on winters ❄️" },
-        ratio
+        "{}, ratio: {}, snowfall: {}",
+        if ratio > 0.6 && !snowfall { "☀️ TIME FOR SUMMER TIRES ☀️" } else { "❄️ stay on winters ❄️" },
+        ratio,
+        snowfall
     );
     Ok(())
 }
