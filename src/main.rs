@@ -1,4 +1,5 @@
-use chrono::{NaiveDateTime, Timelike};
+use chrono::{NaiveDate, NaiveDateTime, Timelike};
+use std::collections::HashMap;
 use reqwest::{Client};
 use serde::Deserialize;
 
@@ -31,6 +32,7 @@ struct WeatherResponse {
     // no need for the other stuff
     hourly: HourlyResponse
 }
+
 
 async fn check_winter_tires(lat: f64, lon: f64, name: &str) -> Result<(), reqwest::Error> {
     let url = format!("https://api.open-meteo.com/v1/forecast?latitude={}&longitude={}&hourly=temperature_2m,precipitation,snowfall&forecast_days=16", lat, lon);
@@ -73,19 +75,89 @@ async fn check_winter_tires(lat: f64, lon: f64, name: &str) -> Result<(), reqwes
     Ok(())
 }
 
-async fn check_winter_tires_serres() -> Result<(), reqwest::Error> {
+async fn check_trackday_windows() -> Result<(), reqwest::Error> {
     // Serres Racing Circuit coordinates: 41.071944, 23.514722
-    check_winter_tires(41.071944, 23.514722, "Serres Racing Circuit").await
+    // Get 8 weeks (56 days) of hourly forecast
+    let url = format!("https://api.open-meteo.com/v1/forecast?latitude=41.071944&longitude=23.514722&hourly=temperature_2m,precipitation,snowfall&forecast_days=16");
+    let resp: WeatherResponse = Client::new().get(&url).send().await?.json().await?;
+    
+    // Group hourly data by day
+    let mut daily_data: HashMap<NaiveDate, (Vec<f64>, Vec<f64>)> = HashMap::new();
+    
+    for (i, timestamp) in resp.hourly.time.iter().enumerate() {
+        let datetime = NaiveDateTime::parse_from_str(timestamp, "%Y-%m-%dT%H:%M")
+            .expect("date parsing");
+        let date = datetime.date();
+        
+        if let (Some(Some(temp)), Some(Some(precip))) = (
+            resp.hourly.temperature.get(i),
+            resp.hourly.precipitation.get(i)
+        ) {
+            let entry = daily_data.entry(date).or_insert_with(|| (Vec::new(), Vec::new()));
+            entry.0.push(*temp);
+            entry.1.push(*precip);
+        }
+    }
+    // Convert to sorted vector of (date, min_temp, max_temp, total_precip)
+    let mut days: Vec<(NaiveDate, f64, f64, f64)> = daily_data
+        .into_iter()
+        .filter_map(|(date, (temps, precips))| {
+            if temps.is_empty() {
+                return None;
+            }
+            let min_temp = temps.iter().fold(f64::INFINITY, |a, &b| a.min(b));
+            let max_temp = temps.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
+            let total_precip = precips.iter().sum::<f64>();
+            Some((date, min_temp, max_temp, total_precip))
+        })
+        .collect();
+    
+    days.sort_by_key(|(date, _, _, _)| *date);
+    
+    let mut trackday_dates = Vec::new();
+    
+    // Check each day (starting from index 3 to have 3 days before available)
+    for i in 3..(days.len().saturating_sub(2)) {
+        let (date, min_temp, max_temp, _) = days[i];
+        
+        // Check temperature conditions
+        if min_temp <= 8.0 || max_temp <= 15.0 {
+            continue;
+        }
+        
+        // Check rain conditions: past 3 days (i-3, i-2, i-1), current day (i), and next 2 days (i+1, i+2)
+        let mut has_rain = false;
+        let start = i.saturating_sub(3);
+        let end = (i + 2).min(days.len() - 1);
+        for j in start..=end {
+            let (_, _, _, precip) = days[j];
+            if precip > 0.0 {
+                has_rain = true;
+                break;
+            }
+        }
+        
+        if !has_rain {
+            trackday_dates.push((date, min_temp, max_temp));
+        }
+    }
+    
+    println!("Serres Racing Circuit - Trackday Windows (next 8 weeks):");
+    if trackday_dates.is_empty() {
+        println!("  No suitable trackday windows found.");
+    } else {
+        for (date, min_temp, max_temp) in trackday_dates {
+            println!("  {} - Min: {:.1}°C, Max: {:.1}°C", date, min_temp, max_temp);
+        }
+    }
+    
+    Ok(())
 }
 
 #[tokio::main]
 async fn main() -> Result<(), reqwest::Error> {
     // Original location: 42.5682, 23.1795
-    let (result1, result2) = tokio::join!(
-        check_winter_tires(42.5682, 23.1795, "Original Location"),
-        check_winter_tires_serres()
-    );
-    result1?;
-    result2?;
+    check_winter_tires(42.5682, 23.1795, "Original Location").await?;
+    check_trackday_windows().await?;
     Ok(())
 }
