@@ -132,13 +132,11 @@ async fn check_trackday_windows() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
     
-    // Convert daily data to vector of (date, min_temp, max_temp, precip_sum)
-    let mut days: Vec<(NaiveDate, f64, f64, f64)> = Vec::new();
+    let mut trackday_dates = Vec::new();
+    let len = daily.time.len();
     
-    for (i, date_str) in daily.time.iter().enumerate() {
-        let date = NaiveDate::parse_from_str(date_str, "%Y-%m-%d")
-            .expect("date parsing");
-        
+    // Check each day (starting from index 3 to have 3 days before available)
+    for i in 3..(len.saturating_sub(2)) {
         let min_temp = match daily.temperature_min.get(i) {
             Some(Some(t)) => *t,
             _ => continue,
@@ -149,20 +147,6 @@ async fn check_trackday_windows() -> Result<(), Box<dyn std::error::Error>> {
             _ => continue,
         };
         
-        let precip_sum = match daily.precipitation_sum.get(i) {
-            Some(Some(p)) => *p,
-            _ => 0.0,
-        };
-        
-        days.push((date, min_temp, max_temp, precip_sum));
-    }
-    
-    let mut trackday_dates = Vec::new();
-    
-    // Check each day (starting from index 3 to have 3 days before available)
-    for i in 3..(days.len().saturating_sub(2)) {
-        let (date, min_temp, max_temp, _) = days[i];
-        
         // Check temperature conditions
         if min_temp <= 8.0 || max_temp <= 15.0 {
             continue;
@@ -171,9 +155,11 @@ async fn check_trackday_windows() -> Result<(), Box<dyn std::error::Error>> {
         // Check rain conditions: past 3 days (i-3, i-2, i-1), current day (i), and next 2 days (i+1, i+2)
         let mut has_rain = false;
         let start = i.saturating_sub(3);
-        let end = (i + 2).min(days.len() - 1);
+        let end = (i + 2).min(len - 1);
         for j in start..=end {
-            let (_, _, _, precip) = days[j];
+            let precip = daily.precipitation_sum.get(j)
+                .and_then(|x| *x)
+                .unwrap_or(0.0);
             if precip > 0.0 {
                 has_rain = true;
                 break;
@@ -181,6 +167,8 @@ async fn check_trackday_windows() -> Result<(), Box<dyn std::error::Error>> {
         }
         
         if !has_rain {
+            let date = NaiveDate::parse_from_str(&daily.time[i], "%Y-%m-%d")
+                .expect("date parsing");
             trackday_dates.push((date, min_temp, max_temp));
         }
     }
