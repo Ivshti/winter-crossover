@@ -17,19 +17,11 @@ where
 
 #[derive(Debug, Deserialize)]
 struct HourlyResponse {
-    //#[serde(deserialize_with = "deserialize_datetime")]
-    //time: Vec<DateTime<Utc>>,
     time: Vec<String>,
     #[serde(alias = "temperature_2m")]
     temperature: Vec<Option<f64>>, 
     precipitation: Vec<Option<f64>>,
     snowfall: Vec<Option<f64>>
-}
-
-#[derive(Debug, Deserialize)]
-struct WeatherResponse {
-    // no need for the other stuff
-    hourly: HourlyResponse
 }
 
 #[derive(Debug, Deserialize)]
@@ -50,24 +42,43 @@ struct DailySeasonalResponse {
 }
 
 #[derive(Debug, Deserialize)]
-struct SeasonalWeatherResponse {
-    daily: DailySeasonalResponse
+#[serde(untagged)]
+enum WeatherData {
+    Hourly {
+        hourly: HourlyResponse
+    },
+    Daily {
+        daily: DailySeasonalResponse
+    },
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum ApiResponse {
+    Error {
+        #[serde(rename = "error")]
+        error: bool,
+        reason: String,
+    },
+    Success(WeatherData),
 }
 
 
 async fn check_winter_tires(lat: f64, lon: f64, name: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let url = format!("https://api.open-meteo.com/v1/forecast?latitude={}&longitude={}&hourly=temperature_2m,precipitation,snowfall&forecast_days=16", lat, lon);
-    let response = Client::new().get(&url).send().await?;
-    let text = response.text().await?;
-    let resp: WeatherResponse = match serde_json::from_str(&text) {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("Unexpected response for {}:", name);
-            eprintln!("{}", text);
-            return Err(format!("Failed to deserialize response: {}", e).into());
+    let url = format!("https://api.open-meteo.com/v1/forecast?latitude={}&longitude={}&hourly=temperature_2m,precipitation,snowfall&forecast_days=16    ", lat, lon);
+    let api_resp: ApiResponse = Client::new().get(&url).send().await?.json().await?;
+    
+    let hourly = match api_resp {
+        ApiResponse::Error { reason, .. } => {
+            return Err(format!("API error for {}: {}", name, reason).into());
+        }
+        ApiResponse::Success(WeatherData::Hourly { hourly }) => hourly,
+        ApiResponse::Success(WeatherData::Daily { .. }) => {
+            return Err(format!("Expected hourly data for {}, got daily data", name).into());
         }
     };
-    let hours: Vec<bool> = resp.hourly
+    
+    let hours: Vec<bool> = hourly
         .time
         .iter()
         .enumerate()
@@ -75,8 +86,8 @@ async fn check_winter_tires(lat: f64, lon: f64, name: &str) -> Result<(), Box<dy
             let date = NaiveDateTime::parse_from_str(&timestamp, "%Y-%m-%dT%H:%M").expect("date parsing");
             let is_night = date.hour() < 8 || date.hour() > 21;
             if is_night { return None; }
-            let temp_celsius = (*resp.hourly.temperature.get(i)?)?;
-            let rain = (*resp.hourly.precipitation.get(i)?)?;
+            let temp_celsius = (*hourly.temperature.get(i)?)?;
+            let rain = (*hourly.precipitation.get(i)?)?;
             Some(if rain == 0.0 {
                 temp_celsius > 5.0
             } else if rain <= 0.5 {
@@ -92,7 +103,7 @@ async fn check_winter_tires(lat: f64, lon: f64, name: &str) -> Result<(), Box<dy
         return Ok(());
     }
 
-    let snowfall = resp.hourly.snowfall.iter().filter_map(|x| *x).any(|x| x > 0.0);
+    let snowfall = hourly.snowfall.iter().filter_map(|x| *x).any(|x| x > 0.0);
     let summer_hours = hours.iter().filter(|x| **x).collect::<Vec<_>>().len();
     let ratio = summer_hours as f64 / hours.len() as f64;
     println!(
@@ -109,35 +120,36 @@ async fn check_trackday_windows() -> Result<(), Box<dyn std::error::Error>> {
     // Serres Racing Circuit coordinates: 41.071944, 23.514722
     // Get 70 days of daily forecast from seasonal API
     let url = format!("https://seasonal-api.open-meteo.com/v1/seasonal?latitude=41.071944&longitude=23.514722&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,rain_sum,snowfall_sum,snowfall_water_equivalent_sum&forecast_days=70&timezone=auto");
-    let response = Client::new().get(&url).send().await?;
-    let text = response.text().await?;
-    let resp: SeasonalWeatherResponse = match serde_json::from_str(&text) {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("Unexpected response for Serres Racing Circuit:");
-            eprintln!("{}", text);
-            return Err(format!("Failed to deserialize response: {}", e).into());
+    let api_resp: ApiResponse = Client::new().get(&url).send().await?.json().await?;
+    
+    let daily = match api_resp {
+        ApiResponse::Error { reason, .. } => {
+            return Err(format!("API error for Serres Racing Circuit: {}", reason).into());
+        }
+        ApiResponse::Success(WeatherData::Daily { daily }) => daily,
+        ApiResponse::Success(WeatherData::Hourly { .. }) => {
+            return Err("Expected daily data for Serres Racing Circuit, got hourly data".into());
         }
     };
     
     // Convert daily data to vector of (date, min_temp, max_temp, precip_sum)
     let mut days: Vec<(NaiveDate, f64, f64, f64)> = Vec::new();
     
-    for (i, date_str) in resp.daily.time.iter().enumerate() {
+    for (i, date_str) in daily.time.iter().enumerate() {
         let date = NaiveDate::parse_from_str(date_str, "%Y-%m-%d")
             .expect("date parsing");
         
-        let min_temp = match resp.daily.temperature_min.get(i) {
+        let min_temp = match daily.temperature_min.get(i) {
             Some(Some(t)) => *t,
             _ => continue,
         };
         
-        let max_temp = match resp.daily.temperature_max.get(i) {
+        let max_temp = match daily.temperature_max.get(i) {
             Some(Some(t)) => *t,
             _ => continue,
         };
         
-        let precip_sum = match resp.daily.precipitation_sum.get(i) {
+        let precip_sum = match daily.precipitation_sum.get(i) {
             Some(Some(p)) => *p,
             _ => 0.0,
         };
