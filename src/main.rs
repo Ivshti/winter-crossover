@@ -34,9 +34,18 @@ struct WeatherResponse {
 }
 
 
-async fn check_winter_tires(lat: f64, lon: f64, name: &str) -> Result<(), reqwest::Error> {
+async fn check_winter_tires(lat: f64, lon: f64, name: &str) -> Result<(), Box<dyn std::error::Error>> {
     let url = format!("https://api.open-meteo.com/v1/forecast?latitude={}&longitude={}&hourly=temperature_2m,precipitation,snowfall&forecast_days=16", lat, lon);
-    let resp: WeatherResponse = Client::new().get(&url).send().await?.json().await?;
+    let response = Client::new().get(&url).send().await?;
+    let text = response.text().await?;
+    let resp: WeatherResponse = match serde_json::from_str(&text) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Unexpected response for {}:", name);
+            eprintln!("{}", text);
+            return Err(format!("Failed to deserialize response: {}", e).into());
+        }
+    };
     let hours: Vec<bool> = resp.hourly
         .time
         .iter()
@@ -75,11 +84,20 @@ async fn check_winter_tires(lat: f64, lon: f64, name: &str) -> Result<(), reqwes
     Ok(())
 }
 
-async fn check_trackday_windows() -> Result<(), reqwest::Error> {
+async fn check_trackday_windows() -> Result<(), Box<dyn std::error::Error>> {
     // Serres Racing Circuit coordinates: 41.071944, 23.514722
     // Get 8 weeks (56 days) of hourly forecast
     let url = format!("https://api.open-meteo.com/v1/forecast?latitude=41.071944&longitude=23.514722&hourly=temperature_2m,precipitation,snowfall&forecast_days=16");
-    let resp: WeatherResponse = Client::new().get(&url).send().await?.json().await?;
+    let response = Client::new().get(&url).send().await?;
+    let text = response.text().await?;
+    let resp: WeatherResponse = match serde_json::from_str(&text) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Unexpected response for Serres Racing Circuit:");
+            eprintln!("{}", text);
+            return Err(format!("Failed to deserialize response: {}", e).into());
+        }
+    };
     
     // Group hourly data by day
     let mut daily_data: HashMap<NaiveDate, (Vec<f64>, Vec<f64>)> = HashMap::new();
@@ -155,7 +173,7 @@ async fn check_trackday_windows() -> Result<(), reqwest::Error> {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), reqwest::Error> {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Original location: 42.5682, 23.1795
     check_winter_tires(42.5682, 23.1795, "Original Location").await?;
     check_trackday_windows().await?;
