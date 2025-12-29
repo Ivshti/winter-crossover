@@ -32,11 +32,9 @@ struct WeatherResponse {
     hourly: HourlyResponse
 }
 
-#[tokio::main]
-async fn main() -> Result<(), reqwest::Error> {
-    // @TODO: flexible lat/lon
-    let url = "https://api.open-meteo.com/v1/forecast?latitude=42.5682&longitude=23.1795&hourly=temperature_2m,precipitation,snowfall&forecast_days=16";
-    let resp: WeatherResponse = Client::new().get(url).send().await?.json().await?;
+async fn check_winter_tires(lat: f64, lon: f64, name: &str) -> Result<(), reqwest::Error> {
+    let url = format!("https://api.open-meteo.com/v1/forecast?latitude={}&longitude={}&hourly=temperature_2m,precipitation,snowfall&forecast_days=16", lat, lon);
+    let resp: WeatherResponse = Client::new().get(&url).send().await?.json().await?;
     let hours: Vec<bool> = resp.hourly
         .time
         .iter()
@@ -58,7 +56,7 @@ async fn main() -> Result<(), reqwest::Error> {
         .collect();
 
     if hours.len() < 200 {
-        eprintln!("to small of a sample: {} hours found", hours.len());
+        eprintln!("{}: too small of a sample: {} hours found", name, hours.len());
         return Ok(());
     }
 
@@ -66,10 +64,28 @@ async fn main() -> Result<(), reqwest::Error> {
     let summer_hours = hours.iter().filter(|x| **x).collect::<Vec<_>>().len();
     let ratio = summer_hours as f64 / hours.len() as f64;
     println!(
-        "{}, ratio: {}, snowfall: {}",
+        "{}: {}, ratio: {}, snowfall: {}",
+        name,
         if ratio > 0.6 && !snowfall { "☀️ TIME FOR SUMMER TIRES ☀️" } else { "❄️ stay on winters ❄️" },
         ratio,
         snowfall
     );
+    Ok(())
+}
+
+async fn check_winter_tires_serres() -> Result<(), reqwest::Error> {
+    // Serres Racing Circuit coordinates: 41.071944, 23.514722
+    check_winter_tires(41.071944, 23.514722, "Serres Racing Circuit").await
+}
+
+#[tokio::main]
+async fn main() -> Result<(), reqwest::Error> {
+    // Original location: 42.5682, 23.1795
+    let (result1, result2) = tokio::join!(
+        check_winter_tires(42.5682, 23.1795, "Original Location"),
+        check_winter_tires_serres()
+    );
+    result1?;
+    result2?;
     Ok(())
 }
