@@ -1,5 +1,4 @@
 use chrono::{NaiveDate, NaiveDateTime, Timelike};
-use std::collections::HashMap;
 use reqwest::{Client};
 use serde::Deserialize;
 
@@ -31,6 +30,28 @@ struct HourlyResponse {
 struct WeatherResponse {
     // no need for the other stuff
     hourly: HourlyResponse
+}
+
+#[derive(Debug, Deserialize)]
+struct DailySeasonalResponse {
+    time: Vec<String>,
+    #[serde(alias = "temperature_2m_max")]
+    temperature_max: Vec<Option<f64>>,
+    #[serde(alias = "temperature_2m_min")]
+    temperature_min: Vec<Option<f64>>,
+    #[serde(alias = "precipitation_sum")]
+    precipitation_sum: Vec<Option<f64>>,
+    #[serde(alias = "rain_sum")]
+    rain_sum: Vec<Option<f64>>,
+    #[serde(alias = "snowfall_sum")]
+    snowfall_sum: Vec<Option<f64>>,
+    #[serde(alias = "snowfall_water_equivalent_sum")]
+    snowfall_water_equivalent_sum: Vec<Option<f64>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SeasonalWeatherResponse {
+    daily: DailySeasonalResponse
 }
 
 
@@ -86,11 +107,11 @@ async fn check_winter_tires(lat: f64, lon: f64, name: &str) -> Result<(), Box<dy
 
 async fn check_trackday_windows() -> Result<(), Box<dyn std::error::Error>> {
     // Serres Racing Circuit coordinates: 41.071944, 23.514722
-    // Get 8 weeks (56 days) of hourly forecast
-    let url = format!("https://api.open-meteo.com/v1/forecast?latitude=41.071944&longitude=23.514722&hourly=temperature_2m,precipitation,snowfall&forecast_days=16");
+    // Get 70 days of daily forecast from seasonal API
+    let url = format!("https://seasonal-api.open-meteo.com/v1/seasonal?latitude=41.071944&longitude=23.514722&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,rain_sum,snowfall_sum,snowfall_water_equivalent_sum&forecast_days=70&timezone=auto");
     let response = Client::new().get(&url).send().await?;
     let text = response.text().await?;
-    let resp: WeatherResponse = match serde_json::from_str(&text) {
+    let resp: SeasonalWeatherResponse = match serde_json::from_str(&text) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Unexpected response for Serres Racing Circuit:");
@@ -99,38 +120,30 @@ async fn check_trackday_windows() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
     
-    // Group hourly data by day
-    let mut daily_data: HashMap<NaiveDate, (Vec<f64>, Vec<f64>)> = HashMap::new();
+    // Convert daily data to vector of (date, min_temp, max_temp, precip_sum)
+    let mut days: Vec<(NaiveDate, f64, f64, f64)> = Vec::new();
     
-    for (i, timestamp) in resp.hourly.time.iter().enumerate() {
-        let datetime = NaiveDateTime::parse_from_str(timestamp, "%Y-%m-%dT%H:%M")
+    for (i, date_str) in resp.daily.time.iter().enumerate() {
+        let date = NaiveDate::parse_from_str(date_str, "%Y-%m-%d")
             .expect("date parsing");
-        let date = datetime.date();
         
-        if let (Some(Some(temp)), Some(Some(precip))) = (
-            resp.hourly.temperature.get(i),
-            resp.hourly.precipitation.get(i)
-        ) {
-            let entry = daily_data.entry(date).or_insert_with(|| (Vec::new(), Vec::new()));
-            entry.0.push(*temp);
-            entry.1.push(*precip);
-        }
+        let min_temp = match resp.daily.temperature_min.get(i) {
+            Some(Some(t)) => *t,
+            _ => continue,
+        };
+        
+        let max_temp = match resp.daily.temperature_max.get(i) {
+            Some(Some(t)) => *t,
+            _ => continue,
+        };
+        
+        let precip_sum = match resp.daily.precipitation_sum.get(i) {
+            Some(Some(p)) => *p,
+            _ => 0.0,
+        };
+        
+        days.push((date, min_temp, max_temp, precip_sum));
     }
-    // Convert to sorted vector of (date, min_temp, max_temp, total_precip)
-    let mut days: Vec<(NaiveDate, f64, f64, f64)> = daily_data
-        .into_iter()
-        .filter_map(|(date, (temps, precips))| {
-            if temps.is_empty() {
-                return None;
-            }
-            let min_temp = temps.iter().fold(f64::INFINITY, |a, &b| a.min(b));
-            let max_temp = temps.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
-            let total_precip = precips.iter().sum::<f64>();
-            Some((date, min_temp, max_temp, total_precip))
-        })
-        .collect();
-    
-    days.sort_by_key(|(date, _, _, _)| *date);
     
     let mut trackday_dates = Vec::new();
     
@@ -160,7 +173,7 @@ async fn check_trackday_windows() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     
-    println!("Serres Racing Circuit - Trackday Windows (next 8 weeks):");
+    println!("Serres Racing Circuit - Trackday Windows (next 70 days):");
     if trackday_dates.is_empty() {
         println!("  No suitable trackday windows found.");
     } else {
