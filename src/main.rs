@@ -119,7 +119,7 @@ async fn check_winter_tires(lat: f64, lon: f64, name: &str) -> Result<(), Box<dy
 async fn check_trackday_windows() -> Result<(), Box<dyn std::error::Error>> {
     // Serres Racing Circuit coordinates: 41.071944, 23.514722
     // Get 70 days of daily forecast from seasonal API
-    let url = format!("https://seasonal-api.open-meteo.com/v1/seasonal?latitude=41.071944&longitude=23.514722&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,rain_sum,snowfall_sum,snowfall_water_equivalent_sum&forecast_days=70&timezone=auto");
+    let url = format!("https://seasonal-api.open-meteo.com/v1/seasonal?latitude=41.071944&longitude=23.514722&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,rain_sum,snowfall_sum,snowfall_water_equivalent_sum&forecast_days=100&timezone=auto");
     let api_resp: ApiResponse = Client::new().get(&url).send().await?.json().await?;
     
     let daily = match api_resp {
@@ -148,25 +148,37 @@ async fn check_trackday_windows() -> Result<(), Box<dyn std::error::Error>> {
         };
         
         // Check temperature conditions
-        if min_temp <= 8.0 || max_temp <= 15.0 {
+        if min_temp <= 7.0 || max_temp <= 14.0 {
             continue;
         }
         
-        // Check rain conditions: past 3 days (i-3, i-2, i-1), current day (i), and next 2 days (i+1, i+2)
+        // Check rain and snowfall conditions: past 2 days (i-2, i-1), current day (i), and next 1 days (i+1)
+        // next one day is so that it's still good if the forecast shifts slightly
         let mut has_rain = false;
-        let start = i.saturating_sub(3);
-        let end = (i + 2).min(len - 1);
+        let mut has_snowfall = false;
+        let start = i.saturating_sub(2);
+        let end = (i + 1).min(len - 1);
         for j in start..=end {
             let precip = daily.precipitation_sum.get(j)
                 .and_then(|x| *x)
                 .unwrap_or(0.0);
-            if precip > 0.0 {
+            // exclude it only if more than 5mm of rain
+            if precip > 5.0 {
                 has_rain = true;
+                break;
+            }
+            
+            let snowfall = daily.snowfall_sum.get(j)
+                .and_then(|x| *x)
+                .unwrap_or(0.0);
+            // exclude if there's any snowfall
+            if snowfall > 0.0 {
+                has_snowfall = true;
                 break;
             }
         }
         
-        if !has_rain {
+        if !has_rain && !has_snowfall {
             let date = NaiveDate::parse_from_str(&daily.time[i], "%Y-%m-%d")
                 .expect("date parsing");
             trackday_dates.push((date, min_temp, max_temp));
